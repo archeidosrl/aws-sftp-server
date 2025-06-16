@@ -93,8 +93,12 @@ class InfrastructureStack(Stack):
         sftp_user_role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
-                actions=["s3:FullAccess"],
-                resources=[f"arn:aws:s3:::{PROJECT_NAME}-sftp-storage-bucket/*"]
+                actions=["s3:*"],
+                resources=[
+                    f"arn:aws:s3:::{PROJECT_NAME}-sftp-storage-bucket",
+                    f"arn:aws:s3:::{PROJECT_NAME}-sftp-storage-bucket/*"
+                ]
+
             )
         )
 
