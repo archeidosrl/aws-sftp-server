@@ -65,4 +65,90 @@ Create a `key-value` secret in AWS Secret Manager and store public ssh keys for 
 - `key` would be the name of the sftp user.
 - `value` would be the public ssh key itself.
 
+## Cloudformation Templates
+Now you've created as many ssh keys as users you want to have access to your sftp server. <br>
+Now, edit `templates/sftp-server.yaml` file <br>
+
+### `sftp-server.yaml`
+1. `Parameters` section: add as many users name as many you've created previously.
+    ``` yaml
+    Parameters:
+        [...]
+        ### -------------------------- ###
+        FirstUser:
+            Type: String
+            Description: User name used to retrieve the SSH key and pass to nested stack, create the sftp user
+        SecondUser:
+            Type: String
+            Description: User name used to retrieve the SSH key and pass to nested stack, create the sftp user
+        [ and so on ... ]
+        ### -------------------------- ###
+    ```
+2. Now, head op at the botton of the `Resources` section: here, add (for each environment you want) as many SFTP users as you need.
+    ``` yaml
+    Resources:
+        [...]
+            # ---------------------------------------------------- SFTP Users ----------------------------------------------------
+            
+            ### Add as many user as needed ###
+   
+            FirstUserDevelopment:
+                Type: 'AWS::CloudFormation::Stack'
+                Properties:
+                TemplateURL: !Sub 'https://${TemplateBucket}.s3.eu-west-1.amazonaws.com/sftp-user.yaml'
+                Parameters:
+                   SFTPServerId: !GetAtt SFTPServer.ServerId
+                   UserName: TestStaging
+                   SshPublicKey: !Sub '{{resolve:secretsmanager:${SecretName}:SecretString:${FirstUser}}}'
+                   ProjectName: !Ref ProjectName
+                   S3Bucket: !Ref S3Bucket
+                   UserRoleArn: !Ref UserRoleArn
+            
+            FirstUserStaging:
+                Type: 'AWS::CloudFormation::Stack'
+                Properties:
+                TemplateURL: !Sub 'https://${TemplateBucket}.s3.eu-west-1.amazonaws.com/sftp-user.yaml'
+                Parameters:
+                   SFTPServerId: !GetAtt SFTPServer.ServerId
+                   UserName: TestStaging
+                   SshPublicKey: !Sub '{{resolve:secretsmanager:${SecretName}:SecretString:${FirstUser}}}'
+                   ProjectName: !Ref ProjectName
+                   S3Bucket: !Ref S3Bucket
+                   UserRoleArn: !Ref UserRoleArn
+            
+            FirstUserProduction:
+                Type: 'AWS::CloudFormation::Stack'
+                Properties:
+                TemplateURL: !Sub 'https://${TemplateBucket}.s3.eu-west-1.amazonaws.com/sftp-user.yaml'
+                Parameters:
+                   SFTPServerId: !GetAtt SFTPServer.ServerId
+                   UserName: TestProduction
+                   SshPublicKey: !Sub '{{resolve:secretsmanager:${SecretName}:SecretString:${FirstUser}}}'
+                   ProjectName: !Ref ProjectName
+                   S3Bucket: !Ref S3Bucket
+                   UserRoleArn: !Ref UserRoleArn
+            
+            [ and so on ... ]
+            # ---------------------------------------------------- SFTP Users ----------------------------------------------------
+    ```
+
+
+## Lambda Function
+In order to deploy the lambda function, create a zip file and upload it to the lambda function.
+Example: let's zip and deploy ``start_stop_sftp_server`` lambda function.
+``` bash
+cd templates/lambda/start_stop_sftp_server
+
+mkdir package
+
+pip install -r requirements.txt -t package/
+
+cp start_stop_sftp_server.py package/
+
+cd package/
+
+zip -r ../function.zip .
+
+```
+
 

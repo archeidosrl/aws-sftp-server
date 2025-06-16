@@ -38,6 +38,7 @@ class InfrastructureStack(Stack):
         SUBNET_CIDR = str(config["vpc"]["subnet_cidr"])
         EIP_ALLOCATION_ID = config["vpc"]["eip_allocation_id"]
         EIP_ADDRESS = config["vpc"]["eip_address"]
+        SLACK_WEBHOOK_URL = config["slack_webhook_url"]
 
         # ----------------------------------------------------- Vpc ----------------------------------------------------
 
@@ -173,9 +174,9 @@ class InfrastructureStack(Stack):
             self,
             f"{PROJECT_NAME}-sftp-start-stop-lambda",
             function_name=f"{PROJECT_NAME}-sftp-start-stop-lambda",
-            runtime=lambdafn.Runtime.RUBY_3_3,
+            runtime=lambdafn.Runtime.PYTHON_3_12,
             role=sftp_lambda_role,
-            code=lambdafn.Code.from_asset("templates/lambda/start_stop_sftp_server"),
+            code=lambdafn.Code.from_asset("templates/lambda/start_stop_sftp_server/function.zip"),
             handler="sftp_start_stop_aws_lambda.lambda_handler",
             timeout=Duration.minutes(15),
             environment={
@@ -189,6 +190,7 @@ class InfrastructureStack(Stack):
                 "TEMPLATE_BUCKET_NAME": str(sftp_cloudformation_template_storaging_bucket.bucket_name),
                 "PROJECT_NAME": str(PROJECT_NAME),
                 "SECRET_NAME": str(secret.secret_name),
+                "SLACK_WEBHOOK_URL": str(SLACK_WEBHOOK_URL)
             }
         )
 
@@ -196,18 +198,17 @@ class InfrastructureStack(Stack):
             self,
             f"{PROJECT_NAME}-handle-s3-event-lambda",
             function_name=f"{PROJECT_NAME}-handle-s3-event-lambda",
-            runtime=lambdafn.Runtime.RUBY_3_3,
+            runtime=lambdafn.Runtime.PYTHON_3_12,
             code=lambdafn.Code.from_asset("templates/lambda/handle_s3_events"),
             handler="handle_s3_events.lambda_handler",
             environment={
-                "DESTINATION_FOLDER": "uploads",
+                "SLACK_WEBHOOK_URL": str(SLACK_WEBHOOK_URL),
             }
         )
 
         sftp_storage_bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED_PUT,
-            s3n.LambdaDestination(handle_s3_event_lambda),
-            s3.NotificationKeyFilter(prefix="uploads/")
+            s3n.LambdaDestination(handle_s3_event_lambda)
         )
 
         # --------------------------------------------- Lambda Permissions ---------------------------------------------
