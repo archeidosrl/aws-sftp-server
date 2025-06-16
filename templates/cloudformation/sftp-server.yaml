@@ -1,0 +1,254 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Template for sftp server
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Project name used in tags and for naming resources
+  TemplateBucket:
+    Type: String
+    Default: sftp-cloudformation-template-bucket
+    Description: |
+      The S3 bucket from which to fetch the templates used by this stack.
+  S3Bucket:
+    Type: String
+    Description: Bucket name.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: ID of the VPC.
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: ID of Subnet used.
+  SubnetCidr:
+    Type: String
+    Description: CIDR of Subnet used.
+  EIPAllocationId:
+    Type: String
+    Description: Elastic Ip AllocationID.
+  EIPAddress:
+    Type: String
+    Description: Elastic Ip Address.
+  UserRoleArn:
+    Type: String
+    Description: Role used for all SFTP users.
+  SecretName:
+    Type: String
+    Description: Name of the secret used to store SSH keys
+  ### -------------------------- ###
+  Test:
+    Type: String
+    Description: User name used to retrieve the SSH key and pass to nested stack, create the sftp user
+  ### -------------------------- ###
+
+
+Resources:
+
+  # --------------------------------------------------- VPC Endpoint ---------------------------------------------------
+
+  VPCEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ProjectName}-SFTP-VPCEndpoint-SG'
+      GroupDescription: !Sub '${ProjectName}, SG used by VPC Endpoint necessary for enabling the link of SFTP Transfer service with Elastic IP'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          CidrIp: !Ref SubnetCidr
+          FromPort: 22
+          ToPort: 22
+          Description: SSH From NLB Subnet
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-SFTP-VPCEndpoint-SG'
+
+  VPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    DependsOn: VPCEndpointSecurityGroup
+    Properties:
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.transfer.server # com.amazonaws.eu-west-1.transfer.server
+      SubnetIds:
+        - !Ref SubnetId
+      VpcEndpointType: Interface
+      VpcId: !Ref VpcId
+
+  # ---------------------------------------------------- SFTP Server ---------------------------------------------------
+
+  SFTPServer:
+    Type: AWS::Transfer::Server
+    Properties:
+      EndpointType: VPC_ENDPOINT
+      EndpointDetails:
+        VpcEndpointId: !Ref VPCEndpoint
+      LoggingRole: !GetAtt ServerLoggingRole.Arn
+      Tags:
+        - Key: Application
+          Value: !Sub '${ProjectName} sftp server'
+
+  ServerLoggingRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub '${AWS::Region}-${ProjectName}-ServerLoggingRole'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - transfer.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: AllowSFTPServerLogging
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:DescribeLogStreams
+                  - logs:CreateLogGroup
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  # ------------------------------------------------------ Lambda ------------------------------------------------------
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowDescribeNetworkInterfaces
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ec2:DescribeNetworkInterfaces'
+                Resource: "*"
+
+  LambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    DeletionPolicy: 'Delete'
+    Properties:
+      Code:
+        ZipFile: !Sub |
+          import cfnresponse
+          import json
+          import boto3
+          def lambda_handler(event, context):
+              print('REQUEST RECEIVED:\n' + json.dumps(event))
+              responseData = {}
+              if event['RequestType'] == 'Delete':
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                return
+              if event['RequestType'] == 'Create':
+                try:
+                  ec2 = boto3.resource('ec2')
+                  enis = event['ResourceProperties']['NetworkInterfaceIds']
+                  for index, eni in enumerate(enis):
+                    network_interface = ec2.NetworkInterface(eni)
+                    responseData['IP' + str(index)] = network_interface.private_ip_address
+                    print(responseData)
+                except Exception as e:
+                  responseData = {'error': str(e)}
+                  cfnresponse.send(event, context, cfnresponse.FAILED, responseData)
+                  return
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: python3.13
+      Timeout: 10
+
+  # ------------------------------------------------- Custom Resource --------------------------------------------------
+
+  GetPrivateIPs:
+    DependsOn:
+      - VPCEndpoint
+    Type: Custom::GetPrivateIPs
+    Properties:
+      ServiceToken: !GetAtt LambdaFunction.Arn
+      NetworkInterfaceIds: !GetAtt VPCEndpoint.NetworkInterfaceIds
+
+  # ------------------------------------------------------- NLB --------------------------------------------------------
+
+  NLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${ProjectName}-sftp-nlb
+      Type: network
+      Scheme: internet-facing
+      SubnetMappings:
+        - AllocationId: !Ref EIPAllocationId
+          SubnetId: !Ref SubnetId
+      Tags:
+        - Key: Application
+          Value: !Sub '${ProjectName} sftp server'
+
+  NLBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${ProjectName}-SFTP-TG'
+      Port: 22
+      Protocol: TCP
+      TargetType: ip
+      HealthCheckEnabled: true
+      VpcId: !Ref VpcId
+      Targets:
+        - Id: !GetAtt GetPrivateIPs.IP0
+          Port: 22
+
+  NLBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref NLB
+      Port: 22
+      Protocol: TCP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NLBTargetGroup
+
+  # ---------------------------------------------------- SFTP Users ----------------------------------------------------
+
+  ### Add as many user as needed ###
+
+  TestUserStaging:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: !Sub 'https://${TemplateBucket}.s3.eu-west-1.amazonaws.com/sftp-user.yaml'
+      Parameters:
+        SFTPServerId: !GetAtt SFTPServer.ServerId
+        UserName: TestStaging
+        ProjectName: !Ref ProjectName
+        S3Bucket: !Ref S3Bucket
+        UserRoleArn: !Ref UserRoleArn
+        SshPublicKey: !Sub '{{resolve:secretsmanager:${SecretName}:SecretString:test}}'
+
+  TestUserProduction:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: !Sub 'https://${TemplateBucket}.s3.eu-west-1.amazonaws.com/sftp-user.yaml'
+      Parameters:
+        SFTPServerId: !GetAtt SFTPServer.ServerId
+        UserName: TestProduction
+        ProjectName: !Ref ProjectName
+        S3Bucket: !Ref S3Bucket
+        UserRoleArn: !Ref UserRoleArn
+        SshPublicKey: !Sub '{{resolve:secretsmanager:${SecretName}:SecretString:test}}'
+
+    ### ------------------------ ###
+
+Outputs:
+  SFTPServerId:
+    Description: ID of the AWS::Transfer::Server created in this template
+    Value: !GetAtt SFTPServer.ServerId

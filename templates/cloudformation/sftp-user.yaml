@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Template for sftp server
+
+Parameters:
+  SFTPServerId:
+    Type: String
+    Description: Hosted Zone ID
+  UserName:
+    Type: String
+    Description: Name for user and relative directory on bucket
+  SshPublicKey:
+    Type: String
+    Description: ssh public key of client
+  ProjectName:
+    Type: String
+    Description: Project name used in tags and for naming resources
+  S3Bucket:
+    Type: String
+    Description: Bucket name
+  UserRoleArn:
+    Type: String
+    Description: Role used for all SFTP users
+
+Resources:
+
+  TransferUser:
+    Type: 'AWS::Transfer::User'
+    Properties:
+      ServerId: !Ref SFTPServerId
+      UserName: !Ref UserName
+      HomeDirectory: !Sub '/${S3Bucket}/${UserName}'
+      Policy: |
+        {
+          "Version": "2012-10-17",
+                  "Statement": [
+                      {
+                          "Sid": "AllowListingOfUserFolder",
+                          "Effect": "Allow",
+                          "Action": "s3:ListBucket",
+                          "Resource": "arn:aws:s3:::${transfer:HomeBucket}",
+                          "Condition": {
+                              "StringLike": {
+                                  "s3:prefix": [
+                                      "${transfer:UserName}/*",
+                                      "${transfer:UserName}"
+                                  ]
+                              }
+                          }
+                      },
+                      {
+                          "Sid": "HomeDirObjectAccess",
+                          "Effect": "Allow",
+                          "Action": [
+                              "s3:PutObject",
+                              "s3:GetObject",
+                              "s3:GetObjectVersion",
+                              "s3:DeleteObject",
+                              "s3:DeleteObjectVersion"
+                          ],
+                          "Resource": "arn:aws:s3:::${transfer:HomeDirectory}*"
+                      }
+                  ]
+          }
+      Role: !Ref UserRoleArn
+      SshPublicKeys: !Sub "{{resolve:secretsmanager:${ProjectName}-secrets:SecretString:${UserName}}}"
+      Tags:
+        - Key: Application
+          Value: !Sub '${ProjectName} sftp server'

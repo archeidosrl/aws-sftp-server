@@ -1,0 +1,19 @@
+*.swp
+package-lock.json
+__pycache__
+.pytest_cache
+.venv
+*.egg-info
+.idea
+
+# CDK asset staging directory
+.cdk.staging
+cdk.out
+
+configs/config.yml
+
+cdk.context.json
+
+templates/lambda/*/.bundle
+templates/lambda/*/vendor
+templates/lambda/*/*.zip

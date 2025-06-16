@@ -1,0 +1,10 @@
+region:
+account_id:
+
+project_name:
+
+vpc:
+  id:
+  eip_allocation_id:
+  eip_address:
+  subnet_cidr:
