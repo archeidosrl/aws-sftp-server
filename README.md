@@ -60,6 +60,15 @@ Enjoy!
 
 # Project
 
+## S3
+After the `storage` bucket is created, create the user's relative folders: 
+e.g.: if you want to create a sftp user named `FirstUser`, and you want more than one environment, create the following folders:
+- `FirstUserDevelopment`
+- `FirstUserStaging`
+- `FirstUserProduction`
+in the S3 bucket.
+Repeat this process for all users you want to have access to your sftp server.
+
 ## AWS Secret Manager
 Create a `key-value` secret in AWS Secret Manager and store public ssh keys for your sftp users. <br> 
 - `key` would be the name of the sftp user.
